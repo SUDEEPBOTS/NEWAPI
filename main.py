@@ -5,7 +5,7 @@ import subprocess
 import requests
 from fastapi import FastAPI
 from motor.motor_asyncio import AsyncIOMotorClient
-from youtubesearchpython.__future__ import VideosSearch  # ✅ FIX
+from youtubesearchpython import VideosSearch # ✅ FIX
 
 # ─────────────────────────────
 # ENV CONFIG
@@ -92,20 +92,22 @@ def extract_video_id(q: str):
     return None
 
 # ✅ FIXED ASYNC SEARCH
-async def search_youtube(query: str):
+def search_youtube(query: str):
     try:
         search = VideosSearch(query, limit=1)
-        result = await search.next()
-        videos = result.get("result")
-        if not videos:
+        result = search.result().get("result")
+
+        if not result:
             return None
 
-        v = videos[0]
+        video = result[0]
+
         return {
-            "id": v["id"],
-            "title": v["title"],
-            "duration": v.get("duration") or "unknown"
+            "id": video["id"],
+            "title": video["title"],
+            "duration": video.get("duration") or "unknown"
         }
+
     except Exception as e:
         print("YT SEARCH ERROR:", e)
         return None
