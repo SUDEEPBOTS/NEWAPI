@@ -6,3 +6,5 @@ requests
 python-multipart
 yt-dlp
 youtube-search-python
+pyrogram
+tgcrypto
