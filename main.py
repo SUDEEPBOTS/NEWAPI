@@ -236,13 +236,15 @@ def download_video_with_cookies(video_id: str):
         return None
 
 def upload_to_catbox(file_path: str):
-    """Upload to catbox"""
+    """Upload to catbox - FIXED VERSION"""
     try:
         print(f"📤 Uploading: {file_path}")
         
         with open(file_path, "rb") as f:
+            # ✅ 关键修复：确保包含 reqtype 参数
             response = requests.post(
                 CATBOX_UPLOAD,
+                data={"reqtype": "fileupload"},  # 必须添加这一行
                 files={"fileToUpload": f},
                 timeout=120
             )
