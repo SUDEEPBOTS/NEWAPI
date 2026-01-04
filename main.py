@@ -44,8 +44,8 @@ app = FastAPI(title="⚡ Sudeep Music API")
 
 # MongoDB
 mongo = AsyncIOMotorClient(MONGO_URL)
-db = mongo["MusicAPI_DB1"]
-videos_col = db["videos_cachet"]
+db = mongo["MusicAPI_DB12"]
+videos_col = db["videos_cacht"]
 keys_col = db["api_users"]
 
 # ⚡ ULTRA-FAST RAM CACHE
@@ -179,12 +179,13 @@ async def verify_key_fast(key: str):
         return False, f"Verification error: {str(e)}"
 
 # ─────────────────────────────
-# 🔥 UPDATED DOWNLOAD FUNCTION (FIXES CORRUPTION)
+# 🔥 UPDATED DOWNLOAD FUNCTION (FIXES CORRUPTION & HYPHEN IDS)
 # ─────────────────────────────
 def download_video_with_cookies(video_id: str):
-    """Download with FFmpeg merge to fix corrupted videos"""
+    """Download with FFmpeg merge to fix corrupted videos + Fix for IDs starting with -"""
     try:
-        out_file = f"/tmp/{video_id}.mp4"
+        # ✅ FIX: Prefix filename with 'song_' to prevent '-' ID errors
+        out_file = f"/tmp/song_{video_id}.mp4"
         
         # Clean existing file
         if os.path.exists(out_file):
@@ -522,4 +523,4 @@ async def startup_tasks():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-    
+        
