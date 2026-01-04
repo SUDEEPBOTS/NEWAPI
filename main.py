@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import requests
 from fastapi import FastAPI, HTTPException
@@ -12,7 +13,10 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")          # Telegram logger bot token
 LOG_GROUP_ID = os.getenv("LOG_GROUP_ID")    # Logger GC ID (-100xxxx)
 
 CATBOX_UPLOAD = "https://catbox.moe/user/api.php"
-COOKIES_PATH = "/app/cookies.txt"           # cookies.txt ROOT me
+
+# 👉 yt-dlp ke liye writable cookies path
+COOKIES_SRC = "/app/cookies.txt"   # repo root se aati hai
+COOKIES_PATH = "/tmp/cookies.txt"  # yt-dlp yahin use karega
 
 # ─────────────────────────────
 # APP
@@ -25,6 +29,17 @@ collection = db["songs_cachee"]
 
 # Ultra-fast RAM cache
 MEM_CACHE = {}
+
+# ─────────────────────────────
+# INIT: copy cookies to /tmp (WRITABLE)
+# ─────────────────────────────
+if os.path.exists(COOKIES_SRC):
+    try:
+        shutil.copy(COOKIES_SRC, COOKIES_PATH)
+    except Exception as e:
+        print("Cookies copy failed:", e)
+else:
+    print("⚠️ cookies.txt not found in /app")
 
 # ─────────────────────────────
 # HELPERS
@@ -71,10 +86,15 @@ def auto_download(video_id: str) -> str:
     yt-dlp + ffmpeg
     Output: /tmp/<video_id>.mp3
     """
+    if not os.path.exists(COOKIES_PATH):
+        raise Exception("cookies.txt missing in container")
+
     out = f"/tmp/{video_id}.mp3"
     cmd = [
         "python", "-m", "yt_dlp",
         "--cookies", COOKIES_PATH,
+        "--no-playlist",
+        "--geo-bypass",
         "-f", "bestaudio",
         "--extract-audio",
         "--audio-format", "mp3",
@@ -82,7 +102,7 @@ def auto_download(video_id: str) -> str:
         yt_url(video_id),
         "-o", out
     ]
-    # ⛑ timeout added to avoid freeze
+
     subprocess.run(cmd, check=True, timeout=300)
     return out
 
@@ -110,7 +130,7 @@ async def get_music(query: str):
         MEM_CACHE[video_id] = resp
         return resp
 
-    # 3️⃣ AUTO DOWNLOAD (yt-dlp → Catbox)
+    # 3️⃣ AUTO DOWNLOAD
     try:
         local_file = auto_download(video_id)
         catbox_link = upload_catbox(local_file)
@@ -123,11 +143,11 @@ async def get_music(query: str):
 
         doc = {
             "video_id": video_id,
-            "title": video_id,   # bot side se proper title aa jaata hai
+            "title": video_id,
             "catbox_link": catbox_link
         }
 
-        # ⛑ safe upsert (duplicate crash nahi hoga)
+        # safe upsert
         await collection.update_one(
             {"video_id": video_id},
             {"$set": doc},
