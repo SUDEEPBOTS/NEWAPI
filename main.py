@@ -15,20 +15,20 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")          # DM notify ke liye
 ADMIN_CONTACT = "@Kaito_3_2"
 
 CATBOX_UPLOAD = "https://catbox.moe/user/api.php"
-COOKIES_PATH = "/app/cookies.txt"           # Docker root
+COOKIES_PATH = "/app/cookies.txt"           # Docker / Render path
 
 # ─────────────────────────────
-# APP
+# APP INIT
 # ─────────────────────────────
-app = FastAPI(title="Sudeep Music API ⚡ Video Auto")
+app = FastAPI(title="Sudeep Music API ⚡")
 
 mongo = AsyncIOMotorClient(MONGO_URL)
 db = mongo["MusicAPI_DB1"]
 
-videos_col = db["videos_cachet"]   # video cache
-keys_col = db["api_users"]         # api keys (bot + api shared)
+videos_col = db["videos_cachet"]
+keys_col = db["api_users"]
 
-# Ultra-fast RAM cache
+# RAM Cache
 MEM_CACHE = {}
 
 # ─────────────────────────────
@@ -41,7 +41,6 @@ async def verify_api_key(key: str):
 
     now = int(time.time())
 
-    # ⛔ Expired
     if now > doc["expires_at"]:
         try:
             requests.post(
@@ -57,10 +56,8 @@ async def verify_api_key(key: str):
             )
         except:
             pass
-
         return False, "API key expired"
 
-    # 🔄 Daily reset
     today = str(datetime.date.today())
     if doc.get("last_reset") != today:
         await keys_col.update_one(
@@ -69,11 +66,9 @@ async def verify_api_key(key: str):
         )
         doc["used_today"] = 0
 
-    # 🚫 Limit
     if doc["used_today"] >= doc["daily_limit"]:
         return False, "Daily limit exceeded"
 
-    # ➕ Count usage
     await keys_col.update_one(
         {"api_key": key},
         {"$inc": {"used_today": 1}}
@@ -98,14 +93,22 @@ def extract_video_id(q: str):
     return None
 
 def search_youtube(query: str):
+    """
+    Returns: {id, title, duration}
+    """
     try:
         s = VideosSearch(query, limit=1)
         r = s.result().get("result")
         if not r:
-            return None, None
-        return r[0]["id"], r[0]["title"]
+            return None
+
+        return {
+            "id": r[0]["id"],
+            "title": r[0]["title"],
+            "duration": r[0]["duration"] or "unknown"
+        }
     except:
-        return None, None
+        return None
 
 def upload_catbox(path: str) -> str:
     with open(path, "rb") as f:
@@ -142,12 +145,11 @@ def auto_download_video(video_id: str) -> str:
     return out
 
 # ─────────────────────────────
-# MAIN VIDEO API
+# MAIN API
 # ─────────────────────────────
 @app.get("/getvideo")
 async def get_video(query: str, key: str | None = None):
 
-    # 🔐 API key required
     if not key:
         return {"status": 401, "error": "API key required"}
 
@@ -155,37 +157,49 @@ async def get_video(query: str, key: str | None = None):
     if not ok:
         return {"status": 403, "error": err}
 
-    # 🔎 Extract or search
     video_id = extract_video_id(query)
     title = None
+    duration = None
 
+    # 🔎 Search if needed
     if not video_id:
-        video_id, title = search_youtube(query)
-        if not video_id:
+        data = search_youtube(query)
+        if not data:
             return {
                 "status": 404,
                 "title": None,
+                "duration": None,
                 "link": None,
                 "video_id": None
             }
 
-    # ⚡ RAM cache
+        video_id = data["id"]
+        title = data["title"]
+        duration = data["duration"]
+    else:
+        data = search_youtube(video_id)
+        if data:
+            title = data["title"]
+            duration = data["duration"]
+
+    # ⚡ RAM Cache
     if video_id in MEM_CACHE:
         return MEM_CACHE[video_id]
 
-    # 💾 DB cache
+    # 💾 DB Cache
     cached = await videos_col.find_one({"video_id": video_id})
     if cached:
         resp = {
             "status": 200,
             "title": cached["title"],
+            "duration": cached.get("duration", "unknown"),
             "link": cached["catbox_link"],
             "video_id": video_id
         }
         MEM_CACHE[video_id] = resp
         return resp
 
-    # ⬇️ Auto download → Catbox
+    # ⬇️ Download → Catbox
     try:
         file_path = auto_download_video(video_id)
         catbox = upload_catbox(file_path)
@@ -200,6 +214,7 @@ async def get_video(query: str, key: str | None = None):
             {"$set": {
                 "video_id": video_id,
                 "title": title or video_id,
+                "duration": duration or "unknown",
                 "catbox_link": catbox
             }},
             upsert=True
@@ -208,9 +223,11 @@ async def get_video(query: str, key: str | None = None):
         resp = {
             "status": 200,
             "title": title or video_id,
+            "duration": duration or "unknown",
             "link": catbox,
             "video_id": video_id
         }
+
         MEM_CACHE[video_id] = resp
         return resp
 
@@ -218,13 +235,14 @@ async def get_video(query: str, key: str | None = None):
         return {
             "status": 500,
             "title": None,
+            "duration": None,
             "link": None,
             "video_id": video_id,
             "error": str(e)
         }
 
 # ─────────────────────────────
-# HEALTH / UPTIME
+# HEALTH CHECK
 # ─────────────────────────────
 @app.api_route("/", methods=["GET", "HEAD"])
 async def home():
