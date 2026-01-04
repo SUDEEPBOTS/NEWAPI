@@ -28,7 +28,7 @@ for path in COOKIES_PATHS:
         print(f"✅ Found cookies: {path}")
         break
 
-app = FastAPI(title="⚡ Sudeep API (Wait Mode)")
+app = FastAPI(title="⚡ Sudeep API (Wait Mode + Node)")
 
 # ─────────────────────────────
 # DATABASE
@@ -86,25 +86,39 @@ def upload_catbox(path: str):
         return r.text.strip() if r.status_code == 200 and r.text.startswith("http") else None
     except: return None
 
-# DOWNLOAD
+# 🔥 UPDATED DOWNLOAD FUNCTION (With Node.js & Optimization)
 def auto_download_video(video_id: str):
     random_name = str(uuid.uuid4())
     out = f"/tmp/{random_name}.mp4"
     if os.path.exists(out): os.remove(out)
 
     cmd = [
-        "python", "-m", "yt_dlp", "--no-playlist", "--geo-bypass",
+        "python", "-m", "yt_dlp",
+        
+        # ✅ Node JS Enable (Speed Boost)
+        "--js-runtimes", "node",
+        
+        "--no-playlist", "--geo-bypass", "--force-ipv4",
+        
+        # ✅ Optimized 480p + H.264 (Universal Playback & Fast Upload)
         "-f", "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best",
         "--merge-output-format", "mp4",
         "--postprocessor-args", "VideoConvertor:-c:v libx264 -c:a aac -movflags +faststart",
+        
         "-o", out, f"https://www.youtube.com/watch?v={video_id}"
     ]
-    if COOKIES_PATH: cmd.insert(3, "--cookies"); cmd.insert(4, COOKIES_PATH)
+    
+    if COOKIES_PATH: 
+        cmd.insert(3, "--cookies")
+        cmd.insert(4, COOKIES_PATH)
 
     try:
+        print(f"🚀 Starting Optimized Download: {video_id}")
         subprocess.run(cmd, check=True, timeout=900)
         return out if os.path.exists(out) and os.path.getsize(out) > 1024 else None
-    except: return None
+    except Exception as e:
+        print(f"❌ Download Failed: {e}")
+        return None
 
 # KEY CHECK
 async def verify_key_fast(key: str):
@@ -115,7 +129,7 @@ async def verify_key_fast(key: str):
     except: return False, "Error"
 
 # ─────────────────────────────
-# 🔥 MAIN ENDPOINT (WAIT UNTIL DONE)
+# 🔥 MAIN ENDPOINT (WAIT LOGIC)
 # ─────────────────────────────
 @app.get("/getvideo")
 async def get_video(query: str, key: str):
@@ -129,12 +143,14 @@ async def get_video(query: str, key: str):
     video_id = extract_video_id(query)
 
     # ──────────────────────────────────────────
-    # STEP 1: CACHE CHECK (Sabse Pehle)
+    # STEP 1: MEMORY & DB CHECK (Fastest)
     # ──────────────────────────────────────────
-    # Agar memory mein hai (Query Mapping)
+    # Agar Video ID nahi hai, toh Query Memory check karo
     if not video_id:
         cached_q = await queries_col.find_one({"query": clean_query})
-        if cached_q: video_id = cached_q["video_id"]
+        if cached_q: 
+            video_id = cached_q["video_id"]
+            print(f"🧠 Query Hit: {clean_query} -> {video_id}")
 
     # Agar DB mein link hai
     if video_id:
@@ -162,15 +178,16 @@ async def get_video(query: str, key: str):
     
     if not title: return {"status": 404, "error": "Song not found"}
 
-    # B. Save Metadata & Query (Future ke liye)
+    # B. Save Metadata & Query Immediately (Future ke liye)
     await videos_col.update_one(
         {"video_id": video_id}, {"$set": {"video_id": video_id, "title": title, "duration": duration}}, upsert=True
     )
+    # Map Query to ID
     if clean_query and not extract_video_id(clean_query):
         await queries_col.update_one({"query": clean_query}, {"$set": {"video_id": video_id}}, upsert=True)
 
     # C. DOWNLOAD & UPLOAD (Wait 20-30s) 🛑 User yahan rukega
-    # Hum 'await' kar rahe hain, return nahi kar rahe
+    # User ko 'Processing' nahi bolenge, sidha link denge
     print(f"⏳ Downloading: {title}")
     file_path = await asyncio.to_thread(auto_download_video, video_id)
     
