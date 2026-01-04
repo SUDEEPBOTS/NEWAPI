@@ -21,8 +21,8 @@ COOKIES_PATH = "/app/cookies.txt"
 app = FastAPI(title="Sudeep Music API ⚡ Video Auto")
 
 client = AsyncIOMotorClient(MONGO_URL)
-db = client["MusicAPI_DB"]
-collection = db["videos_cache"]
+db = client["MusicAPI_DB1"]
+collection = db["videos_cachet"]
 
 MEM_CACHE = {}
 
