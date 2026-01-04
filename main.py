@@ -5,6 +5,7 @@ import subprocess
 import requests
 import re
 import asyncio
+import uuid  # ✅ Added for safe filenames
 from fastapi import FastAPI
 from motor.motor_asyncio import AsyncIOMotorClient
 import yt_dlp
@@ -179,46 +180,52 @@ async def verify_key_fast(key: str):
         return False, f"Verification error: {str(e)}"
 
 # ─────────────────────────────
-# 🔥 UPDATED DOWNLOAD FUNCTION (FIXES CORRUPTION & HYPHEN IDS)
+# 🔥 FINAL FIXED DOWNLOAD FUNCTION (UUID + DOUBLE DASH)
 # ─────────────────────────────
 def download_video_with_cookies(video_id: str):
-    """Download with FFmpeg merge to fix corrupted videos + Fix for IDs starting with -"""
+    """
+    Download with UUID filename to prevent ALL filename/ID errors.
+    """
     try:
-        # ✅ FIX: Prefix filename with 'song_' to prevent '-' ID errors
-        out_file = f"/tmp/song_{video_id}.mp4"
+        # ✅ FIX 1: Generate Random Filename (UUID)
+        # Isse Video ID ka '-' ya koi aur symbol filename ko kharab nahi karega.
+        random_name = str(uuid.uuid4())
+        out_file = f"/tmp/{random_name}.mp4"
         
-        # Clean existing file
+        # Clean existing (waise uuid unique hota hai, par safety ke liye)
         if os.path.exists(out_file):
             os.remove(out_file)
         
-        # Command setup with FFmpeg merge and Recode
         cmd = [
             "yt-dlp",
-            # Try to get Best Video (MP4) + Best Audio (M4A) OR fallback to Best Single
+            # Best quality logic
             "-f", "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best[height<=480]",
             
-            # Force merge into MP4 container
+            # Formatting
             "--merge-output-format", "mp4",
-            
-            # Ensure codec is compatible (Fixes 'unsupported format' on phones)
             "--recode-video", "mp4",
-            
             "--no-playlist",
             "--socket-timeout", "30",
             
-            # Output file
+            # ✅ FIX 2: Output Template with Fixed random name
             "-o", out_file,
+            
+            # ✅ FIX 3: Double Dash Safety
+            # '--' batata hai ki options khatam, aage URL hai (Safe for ids like -FP...)
+            "--", 
             f"https://www.youtube.com/watch?v={video_id}"
         ]
         
-        # Add cookies if available
+        # Cookies check
         if COOKIES_PATH and os.path.exists(COOKIES_PATH):
-            cmd.extend(["--cookies", COOKIES_PATH])
+            # Insert cookies before '--'
+            # Index -2 means just before the last 2 items ("--" and url)
+            cmd.insert(-2, "--cookies")
+            cmd.insert(-2, COOKIES_PATH)
             print("🍪 Using cookies for download")
         
         print(f"Running command: {' '.join(cmd)}")
         
-        # Run download (Increased timeout to 10 mins for merging)
         result = subprocess.run(
             cmd, 
             capture_output=True, 
@@ -226,34 +233,40 @@ def download_video_with_cookies(video_id: str):
             timeout=600
         )
         
-        if result.returncode != 0:
-            print(f"❌ Download error: {result.stderr}")
-            # Fallback for tough videos (Single file only)
-            print("🔄 Retrying with fallback mode...")
+        # 🔍 FIX 4: Smart File Finder
+        # Agar return code 0 hai par exact file nahi bani, to directory check karo
+        if not os.path.exists(out_file):
+            print(f"⚠️ File not found at {out_file}. Checking /tmp directory content...")
+            # Kabhi kabhi yt-dlp extension change kar deta hai (.mkv etc)
+            files = os.listdir("/tmp")
+            for f in files:
+                if random_name in f:
+                    print(f"⚠️ Found similar file: {f}. Renaming to .mp4")
+                    old_path = os.path.join("/tmp", f)
+                    os.rename(old_path, out_file)
+                    break
+        
+        if result.returncode != 0 and not os.path.exists(out_file):
+            print(f"❌ Download error logs: {result.stderr}")
+            # Fallback (Simple download)
+            print("🔄 Retrying with simple fallback...")
             fallback_cmd = [
-                "yt-dlp",
-                "-f", "best[height<=480]",
-                "-o", out_file,
-                f"https://www.youtube.com/watch?v={video_id}"
+                "yt-dlp", "-f", "best[height<=480]", "-o", out_file, "--", f"https://www.youtube.com/watch?v={video_id}"
             ]
             subprocess.run(fallback_cmd, capture_output=True, text=True, timeout=300)
         
-        # Verify file
+        # Final Check
         if os.path.exists(out_file):
             file_size = os.path.getsize(out_file)
-            if file_size < 1024: # Less than 1KB = Corrupted
+            if file_size < 1024:
                 print("❌ File too small (Corrupted)")
                 return None
-            
             print(f"✅ Downloaded: {out_file} ({file_size} bytes)")
             return out_file
         else:
-            print(f"❌ File not created: {out_file}")
+            print(f"❌ File absolutely not created. Something is blocking writes.")
             return None
             
-    except subprocess.TimeoutExpired:
-        print("⏰ Download timeout")
-        return None
     except Exception as e:
         print(f"Download exception: {e}")
         return None
@@ -523,4 +536,4 @@ async def startup_tasks():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-        
+            
