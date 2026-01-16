@@ -18,7 +18,7 @@ MONGO_URL = os.getenv("MONGO_DB_URI")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 LOGGER_ID = -1003639584506
 
-# 🔥 PROXY CONFIGURATION (Automatic from Render Env)
+# 🔥 PROXY CONFIGURATION
 PROXY_API_URL = os.getenv("PROXY_API_URL") 
 USE_PROXY = bool(PROXY_API_URL) 
 PROXIES_CACHE = [] 
@@ -33,14 +33,14 @@ if not MONGO_URL:
 
 CATBOX_UPLOAD = "https://catbox.moe/user/api.php"
 
-# COOKIES PATH CHECK
-COOKIES_PATHS = ["/app/cookies.txt", "./cookies.txt", "/etc/cookies.txt", "/tmp/cookies.txt"]
-COOKIES_PATH = None
-for path in COOKIES_PATHS:
-    if os.path.exists(path):
-        COOKIES_PATH = path
-        print(f"✅ Found cookies: {path}")
-        break
+# ⚠️ COOKIES DISABLED FOR ANDROID CLIENT COMPATIBILITY
+# Android client cookies support nahi karta, par wo bina cookies ke fast chalta hai.
+COOKIES_PATH = None 
+# for path in ["/app/cookies.txt", "./cookies.txt"]:
+#     if os.path.exists(path):
+#         COOKIES_PATH = path
+#         print(f"✅ Found cookies: {path}")
+#         break
 
 app = FastAPI(title="⚡ Sudeep API (Logger + Thumb Fix + Proxy + Android Bypass)")
 
@@ -92,50 +92,36 @@ def send_telegram_log(title, duration, link, vid_id):
         print(f"❌ Logger Error: {e}")
 
 # ─────────────────────────────
-# 🔥 PROXY MANAGER (Webshare Optimized - Fixed 400 Error)
+# 🔥 PROXY MANAGER
 # ─────────────────────────────
 def fetch_proxies():
-    """Webshare API se proxies layega aur format karega (Headers Added)"""
     global PROXIES_CACHE
     if not USE_PROXY or not PROXY_API_URL: return
-    
     try:
         print("🔄 Fetching new proxies from Webshare...")
-        
-        # ✅ HEADERS ADD KIYE (Fix for 400 Error)
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
-        
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
         resp = requests.get(PROXY_API_URL, headers=headers, timeout=15)
-        
         if resp.status_code == 200:
             lines = resp.text.strip().split('\n')
             new_proxies = []
-            
             for line in lines:
                 clean_line = line.strip()
                 if not clean_line: continue
-                
                 parts = clean_line.split(':')
-                
                 if len(parts) == 4:
-                    # Format: http://user:pass@ip:port
                     formatted = f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}"
                     new_proxies.append(formatted)
                 elif len(parts) == 2:
                     new_proxies.append(f"http://{clean_line}")
                 else:
                     new_proxies.append(f"http://{clean_line}")
-
             if new_proxies:
                 PROXIES_CACHE = new_proxies
-                print(f"✅ Loaded {len(PROXIES_CACHE)} proxies from Webshare.")
+                print(f"✅ Loaded {len(PROXIES_CACHE)} proxies.")
             else:
                 print("⚠️ API returned empty list.")
         else:
-            print(f"⚠️ Proxy API Error: {resp.status_code} - Check URL in Render")
-            
+            print(f"⚠️ Proxy API Error: {resp.status_code}")
     except Exception as e:
         print(f"❌ Proxy Fetch Error: {e}")
 
@@ -146,7 +132,7 @@ def get_random_proxy():
     return None
 
 # ─────────────────────────────
-# 🔥 STEP 1: SEARCH ONLY (Metadata + Android Fix)
+# 🔥 STEP 1: SEARCH ONLY (Android Mode - No Cookies)
 # ─────────────────────────────
 def get_video_id_only(query: str):
     max_retries = 3
@@ -160,11 +146,13 @@ def get_video_id_only(query: str):
             'noplaylist': True,
             'remote_components': 'ejs:github', 
             'js_runtimes': ['node'],
-            # ✅ NEW: Android Client use karenge (Challenge Bypass ke liye)
+            # ✅ Android Client Enabled
             'extractor_args': {'youtube': {'player_client': ['android']}}
         }
         
-        if COOKIES_PATH: ydl_opts['cookiefile'] = COOKIES_PATH
+        # ❌ Cookies Removed to prevent "Skipping android client" error
+        # if COOKIES_PATH: ydl_opts['cookiefile'] = COOKIES_PATH
+        
         if current_proxy: ydl_opts['proxy'] = current_proxy
 
         try:
@@ -199,7 +187,7 @@ def upload_catbox(path: str):
     except: return None
 
 # ─────────────────────────────
-# 🔥 STEP 2: DOWNLOAD - WITH PROXY + ANDROID CLIENT
+# 🔥 STEP 2: DOWNLOAD (Android Mode - No Cookies)
 # ─────────────────────────────
 def auto_download_video(video_id: str):
     random_name = str(uuid.uuid4())
@@ -210,13 +198,12 @@ def auto_download_video(video_id: str):
     for attempt in range(max_retries):
         current_proxy = get_random_proxy()
         
-        # 1. Base Command
         cmd = [
             "python", "-m", "yt_dlp", 
             "--js-runtimes", "node", 
             "--no-playlist", "--geo-bypass",
             "--remote-components", "ejs:github",
-            # ✅ NEW: Android Client se Download fast hoga aur challenge nahi aayega
+            # ✅ Android Client (Crucial)
             "--extractor-args", "youtube:player_client=android",
             "-f", "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best",
             "--merge-output-format", "mp4",
@@ -224,15 +211,13 @@ def auto_download_video(video_id: str):
             "-o", out
         ]
         
-        # 2. Add Options
-        if COOKIES_PATH: 
-            cmd += ["--cookies", COOKIES_PATH]
+        # ❌ Cookies Removed
+        # if COOKIES_PATH: cmd += ["--cookies", COOKIES_PATH]
         
         if current_proxy:
             cmd += ["--proxy", current_proxy]
             print(f"⬇️ Using Proxy (Attempt {attempt+1})")
             
-        # 3. Add URL at the END (Critical for stability)
         cmd.append(f"https://www.youtube.com/watch?v={video_id}")
 
         try:
@@ -286,7 +271,7 @@ async def user_stats(target_key: str):
 
 @app.api_route("/", methods=["GET", "HEAD"])
 async def home():
-    return {"status": "Running", "version": "Android Client + Proxy Fix"}
+    return {"status": "Running", "version": "Android Client + No Cookies"}
 
 @app.get("/getvideo")
 async def get_video(query: str, key: str):
