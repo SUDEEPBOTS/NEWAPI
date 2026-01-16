@@ -1,34 +1,21 @@
 import os
 import time
 import datetime
+import subprocess
 import requests
 import re
 import asyncio
 import uuid
-import sys
-import subprocess
-
-# ─────────────────────────────
-# 🔥 AUTO-UPDATE (Keep this!)
-# ─────────────────────────────
-try:
-    print("🔄 Force Updating yt-dlp...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-U", "yt-dlp"])
-    print("✅ yt-dlp Updated Successfully!")
-except Exception as e:
-    print(f"⚠️ Auto-update failed: {e}")
-
-# Update ke baad hi import karo taaki naya version load ho
-import yt_dlp
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from motor.motor_asyncio import AsyncIOMotorClient
+import yt_dlp
 
 # ─────────────────────────────
 # CONFIG
 # ─────────────────────────────
 MONGO_URL = os.getenv("MONGO_DB_URI")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-LOGGER_ID = -1003639584506
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # ⚠️ Ye Zaroor Daalna Env Vars mein
+LOGGER_ID = -1003639584506          # ✅ Tera Logger Group ID
 
 if not MONGO_URL:
     print("⚠️ MONGO_DB_URI not found.")
@@ -44,7 +31,7 @@ for path in COOKIES_PATHS:
         print(f"✅ Found cookies: {path}")
         break
 
-app = FastAPI(title="⚡ Sudeep API (Python Native Fix)")
+app = FastAPI(title="⚡ Sudeep API (Logger + Thumb Fix)")
 
 # ─────────────────────────────
 # DATABASE
@@ -72,9 +59,11 @@ def format_time(seconds):
     try: return f"{int(seconds)//60}:{int(seconds)%60:02d}"
     except: return "0:00"
 
+# 📸 FORCE THUMBNAIL (Jugaad Function)
 def get_fallback_thumb(vid_id):
     return f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg"
 
+# 📢 SEND LOG TO TELEGRAM
 def send_telegram_log(title, duration, link, vid_id):
     if not BOT_TOKEN: return
     try:
@@ -93,6 +82,34 @@ def send_telegram_log(title, duration, link, vid_id):
     except Exception as e:
         print(f"❌ Logger Error: {e}")
 
+# 🔥 STEP 1: SEARCH ONLY (Metadata + Thumbnail)
+def get_video_id_only(query: str):
+    ydl_opts = {'quiet': True, 'skip_download': True, 'extract_flat': True, 'noplaylist': True}
+    if COOKIES_PATH: ydl_opts['cookiefile'] = COOKIES_PATH
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Case A: Direct ID/URL
+            direct_id = extract_video_id(query)
+            if direct_id:
+                info = ydl.extract_info(f"https://www.youtube.com/watch?v={direct_id}", download=False)
+                # 👇 Thumbnail Check
+                thumb = info.get('thumbnail') or get_fallback_thumb(direct_id)
+                return direct_id, info.get('title'), format_time(info.get('duration')), thumb
+
+            # Case B: Search Query
+            else:
+                info = ydl.extract_info(f"ytsearch1:{query}", download=False)
+                if info and 'entries' in info and info['entries']:
+                    v = info['entries'][0]
+                    vid_id = v['id']
+                    # 👇 Thumbnail Check
+                    thumb = v.get('thumbnail') or get_fallback_thumb(vid_id)
+                    return vid_id, v['title'], format_time(v.get('duration')), thumb
+    except Exception as e:
+        print(f"Search Error: {e}")
+    return None, None, None, None
+
 def upload_catbox(path: str):
     try:
         with open(path, "rb") as f:
@@ -100,101 +117,59 @@ def upload_catbox(path: str):
         return r.text.strip() if r.status_code == 200 and r.text.startswith("http") else None
     except: return None
 
-# ─────────────────────────────
-# 🔥 STEP 1: SEARCH ONLY
-# ─────────────────────────────
-def get_video_id_only(query: str):
-    ydl_opts = {
-        'quiet': True, 
-        'skip_download': True, 
-        'extract_flat': True, 
-        'noplaylist': True,
-        'compat_opts': {'remote-components': 'ejs:github'},
-        'extractor_args': {'youtube': {'player_client': ['web_embedded', 'web']}},
-        'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-    }
-    if COOKIES_PATH: ydl_opts['cookiefile'] = COOKIES_PATH
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            direct_id = extract_video_id(query)
-            if direct_id:
-                info = ydl.extract_info(f"https://www.youtube.com/watch?v={direct_id}", download=False)
-                thumb = info.get('thumbnail') or get_fallback_thumb(direct_id)
-                return direct_id, info.get('title'), format_time(info.get('duration')), thumb
-            else:
-                info = ydl.extract_info(f"ytsearch1:{query}", download=False)
-                if info and 'entries' in info and info['entries']:
-                    v = info['entries'][0]
-                    vid_id = v['id']
-                    thumb = v.get('thumbnail') or get_fallback_thumb(vid_id)
-                    return vid_id, v['title'], format_time(v.get('duration')), thumb
-    except Exception as e:
-        print(f"Search Error: {e}")
-    return None, None, None, None
-
-# ─────────────────────────────
-# 🔥 STEP 2: DOWNLOAD (PYTHON NATIVE REPLACEMENT)
-# ─────────────────────────────
+# 🔥 STEP 2: DOWNLOAD
 def auto_download_video(video_id: str):
     random_name = str(uuid.uuid4())
     out = f"/tmp/{random_name}.mp4"
     if os.path.exists(out): os.remove(out)
 
-    # ✅ AB HUM SUBPROCESS USE NAHI KARENGE
-    # ✅ DIRECT PYTHON LIBRARY USE KARENGE (Jo Updated Hai)
-    
-    ydl_opts = {
-        'format': 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best',
-        'outtmpl': out,
-        'merge_output_format': 'mp4',
-        'noplaylist': True,
-        'geo_bypass': True,
-        
-        # 🛡️ THE FIXES (Python Dictionary Format)
-        'compat_opts': {'remote-components': 'ejs:github'},
-        'extractor_args': {'youtube': {'player_client': ['web_embedded', 'web']}},
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        },
-        
-        # ⚙️ Post Processor (FFmpeg)
-        'postprocessor_args': {
-            'ffmpeg': ['-c:v', 'libx264', '-c:a', 'aac', '-movflags', '+faststart']
-        }
-    }
-
-    if COOKIES_PATH:
-        ydl_opts['cookiefile'] = COOKIES_PATH
+    cmd = [
+        "python", "-m", "yt_dlp", "--js-runtimes", "node", "--no-playlist", "--geo-bypass",
+        "-f", "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best",
+        "--merge-output-format", "mp4",
+        "--postprocessor-args", "VideoConvertor:-c:v libx264 -c:a aac -movflags +faststart",
+        "-o", out, f"https://www.youtube.com/watch?v={video_id}"
+    ]
+    if COOKIES_PATH: 
+        cmd.insert(3, "--cookies"); cmd.insert(4, COOKIES_PATH)
 
     try:
-        # 🔥 Actual Download via Python
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
-            
-        # Check if file exists
-        if os.path.exists(out) and os.path.getsize(out) > 1024:
-            return out
-        else:
-            return None
-    except Exception as e:
-        print(f"Download Error (Python Native): {e}")
-        return None
+        subprocess.run(cmd, check=True, timeout=900)
+        return out if os.path.exists(out) and os.path.getsize(out) > 1024 else None
+    except: return None
 
 # ─────────────────────────────
-# 🔥 AUTH CHECK & ROUTES
+# 🔥 AUTH CHECK + USAGE INCREMENT
 # ─────────────────────────────
 async def verify_and_count(key: str):
     doc = await keys_col.find_one({"api_key": key})
-    if not doc or not doc.get("active", True): return False, "Invalid/Inactive Key"
+
+    if not doc or not doc.get("active", True):
+        return False, "Invalid/Inactive Key"
+
     today = str(datetime.date.today())
     if doc.get("last_reset") != today:
-        await keys_col.update_one({"api_key": key}, {"$set": {"used_today": 0, "last_reset": today}})
+        await keys_col.update_one(
+            {"api_key": key},
+            {"$set": {"used_today": 0, "last_reset": today}}
+        )
         doc["used_today"] = 0 
-    if doc.get("used_today", 0) >= doc.get("daily_limit", 100): return False, "Daily Limit Exceeded"
-    await keys_col.update_one({"api_key": key}, {"$inc": {"used_today": 1, "total_usage": 1}, "$set": {"last_used": time.time()}})
+
+    if doc.get("used_today", 0) >= doc.get("daily_limit", 100):
+        return False, "Daily Limit Exceeded"
+
+    await keys_col.update_one(
+        {"api_key": key},
+        {
+            "$inc": {"used_today": 1, "total_usage": 1},
+            "$set": {"last_used": time.time()}
+        }
+    )
     return True, None
 
+# ─────────────────────────────
+# 🔥 STATS & HOME
+# ─────────────────────────────
 @app.get("/stats")
 async def get_stats():
     total_songs = await videos_col.count_documents({})
@@ -205,55 +180,118 @@ async def get_stats():
 async def user_stats(target_key: str):
     doc = await keys_col.find_one({"api_key": target_key})
     if not doc: return {"status": 404, "error": "Key Not Found"}
-    return {"user_id": doc.get("user_id"), "used_today": doc.get("used_today", 0), "total_usage": doc.get("total_usage", 0), "daily_limit": doc.get("daily_limit", 100)}
+    return {
+        "user_id": doc.get("user_id"),
+        "used_today": doc.get("used_today", 0),
+        "total_usage": doc.get("total_usage", 0),
+        "daily_limit": doc.get("daily_limit", 100)
+    }
 
 @app.api_route("/", methods=["GET", "HEAD"])
 async def home():
-    return {"status": "Running", "version": "Python Native Fix"}
+    return {"status": "Running", "version": "Logger + Thumb Fix"}
 
+# ─────────────────────────────
+# MAIN API LOGIC
+# ─────────────────────────────
 @app.get("/getvideo")
 async def get_video(query: str, key: str):
     start_time = time.time()
+
+    # 1. Auth Check
     is_valid, err = await verify_and_count(key)
     if not is_valid: return {"status": 403, "error": err}
+
     clean_query = query.strip().lower()
-    
+
+    # PART A: IDENTIFY VIDEO
     video_id = None
     cached_q = await queries_col.find_one({"query": clean_query})
-    title = "Unknown"; duration = "0:00"; thumbnail = None
+
+    title = "Unknown"
+    duration = "0:00"
+    thumbnail = None
 
     if cached_q:
         video_id = cached_q["video_id"]
         meta = await videos_col.find_one({"video_id": video_id})
-        if meta: title = meta.get("title", "Unknown"); duration = meta.get("duration", "0:00"); thumbnail = meta.get("thumbnail")
+        if meta:
+            title = meta.get("title", "Unknown")
+            duration = meta.get("duration", "0:00")
+            thumbnail = meta.get("thumbnail")
 
+    # Search if not in memory
     if not video_id:
         print(f"🔍 Searching: {query}")
         video_id, title, duration, thumbnail = await asyncio.to_thread(get_video_id_only, query)
-        if video_id: await queries_col.update_one({"query": clean_query}, {"$set": {"video_id": video_id}}, upsert=True)
+
+        if video_id:
+             await queries_col.update_one({"query": clean_query}, {"$set": {"video_id": video_id}}, upsert=True)
 
     if not video_id: return {"status": 404, "error": "Not Found"}
-    if not thumbnail: thumbnail = get_fallback_thumb(video_id)
 
+    # 🔥 FINAL THUMBNAIL CHECK (Agar search se nahi mila toh manually banao)
+    if not thumbnail:
+        thumbnail = get_fallback_thumb(video_id)
+
+    # PART B: CHECK DATABASE
     cached = await videos_col.find_one({"video_id": video_id})
+
     if cached and cached.get("catbox_link"):
         print(f"✅ Found in DB: {title}")
-        return {"status": 200, "title": cached.get("title", title), "duration": cached.get("duration", duration), "link": cached["catbox_link"], "id": video_id, "thumbnail": cached.get("thumbnail", thumbnail), "cached": True, "response_time": f"{time.time()-start_time:.2f}s"}
+        return {
+            "status": 200,
+            "title": cached.get("title", title),
+            "duration": cached.get("duration", duration),
+            "link": cached["catbox_link"],
+            "id": video_id,
+            "thumbnail": cached.get("thumbnail", thumbnail), # ✅ Fixed
+            "cached": True,
+            "response_time": f"{time.time()-start_time:.2f}s"
+        }
 
+    # PART C: DOWNLOAD & SAVE (NEW SONG)
     print(f"⏳ Downloading: {title}")
-    await videos_col.update_one({"video_id": video_id}, {"$set": {"video_id": video_id, "title": title, "duration": duration, "thumbnail": thumbnail}}, upsert=True)
+
+    # Save Metadata + Thumbnail immediately
+    await videos_col.update_one(
+        {"video_id": video_id}, 
+        {"$set": {
+            "video_id": video_id, 
+            "title": title, 
+            "duration": duration,
+            "thumbnail": thumbnail # ✅ Saving to DB
+        }}, 
+        upsert=True
+    )
 
     file_path = await asyncio.to_thread(auto_download_video, video_id)
     if not file_path: return {"status": 500, "error": "Download Failed"}
 
     link = await asyncio.to_thread(upload_catbox, file_path)
     if os.path.exists(file_path): os.remove(file_path)
+
     if not link: return {"status": 500, "error": "Upload Failed"}
 
-    await videos_col.update_one({"video_id": video_id}, {"$set": {"catbox_link": link, "cached_at": datetime.datetime.now()}})
+    # Update DB
+    await videos_col.update_one(
+        {"video_id": video_id},
+        {"$set": {"catbox_link": link, "cached_at": datetime.datetime.now()}}
+    )
+
+    # 📢 SEND TELEGRAM LOG (Background Task)
     asyncio.create_task(asyncio.to_thread(send_telegram_log, title, duration, link, video_id))
 
-    return {"status": 200, "title": title, "duration": duration, "link": link, "id": video_id, "thumbnail": thumbnail, "cached": False, "response_time": f"{time.time()-start_time:.2f}s"}
+    return {
+        "status": 200,
+        "title": title,
+        "duration": duration,
+        "link": link,
+        "id": video_id,
+        "thumbnail": thumbnail, # ✅ Returned
+        "cached": False,
+        "response_time": f"{time.time()-start_time:.2f}s"
+    }
 
 if __name__ == "__main__":
     import uvicorn
