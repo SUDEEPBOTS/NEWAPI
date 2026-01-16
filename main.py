@@ -95,16 +95,22 @@ def send_telegram_log(title, duration, link, vid_id):
         print(f"❌ Logger Error: {e}")
 
 # ─────────────────────────────
-# 🔥 PROXY MANAGER (Webshare Optimized)
+# 🔥 PROXY MANAGER (Webshare Optimized - Fixed 400 Error)
 # ─────────────────────────────
 def fetch_proxies():
-    """Webshare API se proxies layega aur format karega"""
+    """Webshare API se proxies layega aur format karega (Headers Added)"""
     global PROXIES_CACHE
     if not USE_PROXY or not PROXY_API_URL: return
     
     try:
         print("🔄 Fetching new proxies from Webshare...")
-        resp = requests.get(PROXY_API_URL, timeout=15)
+        
+        # ✅ HEADERS ADD KIYE (Fix for 400 Error)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        
+        resp = requests.get(PROXY_API_URL, headers=headers, timeout=15)
         
         if resp.status_code == 200:
             lines = resp.text.strip().split('\n')
@@ -134,7 +140,7 @@ def fetch_proxies():
             else:
                 print("⚠️ API returned empty list.")
         else:
-            print(f"⚠️ Proxy API Error: {resp.status_code}")
+            print(f"⚠️ Proxy API Error: {resp.status_code} - Check URL in Render")
             
     except Exception as e:
         print(f"❌ Proxy Fetch Error: {e}")
@@ -159,13 +165,13 @@ def get_video_id_only(query: str):
     for attempt in range(max_retries):
         current_proxy = get_random_proxy()
         
-        # ✅ Updated ydl_opts as per your request
+        # ✅ Updated ydl_opts 
         ydl_opts = {
             'quiet': True, 
             'skip_download': True, 
             'extract_flat': True, 
             'noplaylist': True,
-            # ✅ New Correct Syntax
+            # ✅ Correct Syntax
             'remote_components': 'ejs:github', 
             'js_runtimes': ['node']
         }
@@ -173,7 +179,6 @@ def get_video_id_only(query: str):
         if COOKIES_PATH: ydl_opts['cookiefile'] = COOKIES_PATH
         if current_proxy: 
             ydl_opts['proxy'] = current_proxy
-            # print(f"🔍 Search Proxy: {current_proxy.split('@')[-1]}") # Debug Log
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -225,7 +230,7 @@ def auto_download_video(video_id: str):
             "python", "-m", "yt_dlp", 
             "--js-runtimes", "node", 
             "--no-playlist", "--geo-bypass",
-            "--remote-components", "ejs:github", # ✅ CLI flag syntax (Correct for subprocess)
+            "--remote-components", "ejs:github", # ✅ CLI flag syntax (Correct)
             "-f", "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best",
             "--merge-output-format", "mp4",
             "--postprocessor-args", "VideoConvertor:-c:v libx264 -c:a aac -movflags +faststart",
@@ -393,4 +398,4 @@ if __name__ == "__main__":
     # Initial fetch
     if USE_PROXY: fetch_proxies()
     uvicorn.run(app, host="0.0.0.0", port=8000)
-        
+    
