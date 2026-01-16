@@ -19,10 +19,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 LOGGER_ID = -1003639584506
 
 # 🔥 PROXY CONFIGURATION (Automatic from Render Env)
-# Render ke "Environment" tab mein 'PROXY_API_URL' naam se key daalna
 PROXY_API_URL = os.getenv("PROXY_API_URL") 
-
-# Agar URL mila to True, nahi mila to False
 USE_PROXY = bool(PROXY_API_URL) 
 PROXIES_CACHE = [] 
 
@@ -45,7 +42,7 @@ for path in COOKIES_PATHS:
         print(f"✅ Found cookies: {path}")
         break
 
-app = FastAPI(title="⚡ Sudeep API (Logger + Thumb Fix + Proxy)")
+app = FastAPI(title="⚡ Sudeep API (Logger + Thumb Fix + Proxy + Android Bypass)")
 
 # ─────────────────────────────
 # DATABASE
@@ -120,7 +117,6 @@ def fetch_proxies():
                 clean_line = line.strip()
                 if not clean_line: continue
                 
-                # Webshare Download List Format often is: IP:PORT:USERNAME:PASSWORD
                 parts = clean_line.split(':')
                 
                 if len(parts) == 4:
@@ -128,10 +124,8 @@ def fetch_proxies():
                     formatted = f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}"
                     new_proxies.append(formatted)
                 elif len(parts) == 2:
-                    # Just IP:PORT (No Auth)
                     new_proxies.append(f"http://{clean_line}")
                 else:
-                    # Fallback assuming it's already a valid URL or different format
                     new_proxies.append(f"http://{clean_line}")
 
             if new_proxies:
@@ -146,39 +140,32 @@ def fetch_proxies():
         print(f"❌ Proxy Fetch Error: {e}")
 
 def get_random_proxy():
-    """Ek random proxy return karega"""
     if not USE_PROXY: return None
-    
-    # Agar cache khali hai to fetch karo
-    if not PROXIES_CACHE:
-        fetch_proxies()
-    
-    if PROXIES_CACHE:
-        return random.choice(PROXIES_CACHE)
+    if not PROXIES_CACHE: fetch_proxies()
+    if PROXIES_CACHE: return random.choice(PROXIES_CACHE)
     return None
 
 # ─────────────────────────────
-# 🔥 STEP 1: SEARCH ONLY (Metadata + Thumbnail)
+# 🔥 STEP 1: SEARCH ONLY (Metadata + Android Fix)
 # ─────────────────────────────
 def get_video_id_only(query: str):
     max_retries = 3
     for attempt in range(max_retries):
         current_proxy = get_random_proxy()
         
-        # ✅ Updated ydl_opts 
         ydl_opts = {
             'quiet': True, 
             'skip_download': True, 
             'extract_flat': True, 
             'noplaylist': True,
-            # ✅ Correct Syntax
             'remote_components': 'ejs:github', 
-            'js_runtimes': ['node']
+            'js_runtimes': ['node'],
+            # ✅ NEW: Android Client use karenge (Challenge Bypass ke liye)
+            'extractor_args': {'youtube': {'player_client': ['android']}}
         }
         
         if COOKIES_PATH: ydl_opts['cookiefile'] = COOKIES_PATH
-        if current_proxy: 
-            ydl_opts['proxy'] = current_proxy
+        if current_proxy: ydl_opts['proxy'] = current_proxy
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -195,14 +182,11 @@ def get_video_id_only(query: str):
                         vid_id = v['id']
                         thumb = v.get('thumbnail') or get_fallback_thumb(vid_id)
                         return vid_id, v['title'], format_time(v.get('duration')), thumb
-            
-            break # Success
-            
+            break 
         except Exception as e:
             print(f"⚠️ Search Error (Attempt {attempt+1}): {e}")
-            PROXIES_CACHE.clear() # Clear cache if issues persist to force refetch
-            if attempt == max_retries - 1:
-                return None, None, None, None
+            PROXIES_CACHE.clear()
+            if attempt == max_retries - 1: return None, None, None, None
             time.sleep(1)
 
     return None, None, None, None
@@ -215,7 +199,7 @@ def upload_catbox(path: str):
     except: return None
 
 # ─────────────────────────────
-# 🔥 STEP 2: DOWNLOAD - WITH PROXY
+# 🔥 STEP 2: DOWNLOAD - WITH PROXY + ANDROID CLIENT
 # ─────────────────────────────
 def auto_download_video(video_id: str):
     random_name = str(uuid.uuid4())
@@ -226,34 +210,39 @@ def auto_download_video(video_id: str):
     for attempt in range(max_retries):
         current_proxy = get_random_proxy()
         
+        # 1. Base Command
         cmd = [
             "python", "-m", "yt_dlp", 
             "--js-runtimes", "node", 
             "--no-playlist", "--geo-bypass",
-            "--remote-components", "ejs:github", # ✅ CLI flag syntax (Correct)
+            "--remote-components", "ejs:github",
+            # ✅ NEW: Android Client se Download fast hoga aur challenge nahi aayega
+            "--extractor-args", "youtube:player_client=android",
             "-f", "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best",
             "--merge-output-format", "mp4",
             "--postprocessor-args", "VideoConvertor:-c:v libx264 -c:a aac -movflags +faststart",
-            "-o", out, f"https://www.youtube.com/watch?v={video_id}"
+            "-o", out
         ]
         
+        # 2. Add Options
         if COOKIES_PATH: 
-            cmd.insert(3, "--cookies"); cmd.insert(4, COOKIES_PATH)
+            cmd += ["--cookies", COOKIES_PATH]
         
         if current_proxy:
-            cmd.insert(3, "--proxy"); cmd.insert(4, current_proxy)
-            print(f"⬇️ Using Proxy for Download (Attempt {attempt+1})")
+            cmd += ["--proxy", current_proxy]
+            print(f"⬇️ Using Proxy (Attempt {attempt+1})")
+            
+        # 3. Add URL at the END (Critical for stability)
+        cmd.append(f"https://www.youtube.com/watch?v={video_id}")
 
         try:
             subprocess.run(cmd, check=True, timeout=900)
             if os.path.exists(out) and os.path.getsize(out) > 1024:
-                return out # Success
+                return out 
         except Exception as e:
             print(f"⚠️ Download Fail (Attempt {attempt+1}): {e}")
             if os.path.exists(out): os.remove(out)
-            
-            if attempt == max_retries - 1:
-                return None
+            if attempt == max_retries - 1: return None
             time.sleep(2)
 
     return None
@@ -263,28 +252,16 @@ def auto_download_video(video_id: str):
 # ─────────────────────────────
 async def verify_and_count(key: str):
     doc = await keys_col.find_one({"api_key": key})
-
-    if not doc or not doc.get("active", True):
-        return False, "Invalid/Inactive Key"
+    if not doc or not doc.get("active", True): return False, "Invalid/Inactive Key"
 
     today = str(datetime.date.today())
     if doc.get("last_reset") != today:
-        await keys_col.update_one(
-            {"api_key": key},
-            {"$set": {"used_today": 0, "last_reset": today}}
-        )
+        await keys_col.update_one({"api_key": key}, {"$set": {"used_today": 0, "last_reset": today}})
         doc["used_today"] = 0 
 
-    if doc.get("used_today", 0) >= doc.get("daily_limit", 100):
-        return False, "Daily Limit Exceeded"
+    if doc.get("used_today", 0) >= doc.get("daily_limit", 100): return False, "Daily Limit Exceeded"
 
-    await keys_col.update_one(
-        {"api_key": key},
-        {
-            "$inc": {"used_today": 1, "total_usage": 1},
-            "$set": {"last_used": time.time()}
-        }
-    )
+    await keys_col.update_one({"api_key": key}, {"$inc": {"used_today": 1, "total_usage": 1}, "$set": {"last_used": time.time()}})
     return True, None
 
 # ─────────────────────────────
@@ -309,12 +286,11 @@ async def user_stats(target_key: str):
 
 @app.api_route("/", methods=["GET", "HEAD"])
 async def home():
-    return {"status": "Running", "version": "Logger + Thumb Fix + Webshare Proxy"}
+    return {"status": "Running", "version": "Android Client + Proxy Fix"}
 
 @app.get("/getvideo")
 async def get_video(query: str, key: str):
     start_time = time.time()
-
     is_valid, err = await verify_and_count(key)
     if not is_valid: return {"status": 403, "error": err}
 
@@ -337,65 +313,40 @@ async def get_video(query: str, key: str):
     if not video_id:
         print(f"🔍 Searching: {query}")
         video_id, title, duration, thumbnail = await asyncio.to_thread(get_video_id_only, query)
-        if video_id:
-             await queries_col.update_one({"query": clean_query}, {"$set": {"video_id": video_id}}, upsert=True)
+        if video_id: await queries_col.update_one({"query": clean_query}, {"$set": {"video_id": video_id}}, upsert=True)
 
     if not video_id: return {"status": 404, "error": "Not Found / Proxy Error"}
-
-    if not thumbnail:
-        thumbnail = get_fallback_thumb(video_id)
+    if not thumbnail: thumbnail = get_fallback_thumb(video_id)
 
     cached = await videos_col.find_one({"video_id": video_id})
     if cached and cached.get("catbox_link"):
         print(f"✅ Found in DB: {title}")
         return {
-            "status": 200,
-            "title": cached.get("title", title),
-            "duration": cached.get("duration", duration),
-            "link": cached["catbox_link"],
-            "id": video_id,
-            "thumbnail": cached.get("thumbnail", thumbnail),
-            "cached": True,
-            "response_time": f"{time.time()-start_time:.2f}s"
+            "status": 200, "title": cached.get("title", title), "duration": cached.get("duration", duration),
+            "link": cached["catbox_link"], "id": video_id, "thumbnail": cached.get("thumbnail", thumbnail),
+            "cached": True, "response_time": f"{time.time()-start_time:.2f}s"
         }
 
     print(f"⏳ Downloading: {title}")
-
-    await videos_col.update_one(
-        {"video_id": video_id}, 
-        {"$set": {"video_id": video_id, "title": title, "duration": duration, "thumbnail": thumbnail}}, 
-        upsert=True
-    )
+    await videos_col.update_one({"video_id": video_id}, {"$set": {"video_id": video_id, "title": title, "duration": duration, "thumbnail": thumbnail}}, upsert=True)
 
     file_path = await asyncio.to_thread(auto_download_video, video_id)
     if not file_path: return {"status": 500, "error": "Download Failed / Proxies Exhausted"}
 
     link = await asyncio.to_thread(upload_catbox, file_path)
     if os.path.exists(file_path): os.remove(file_path)
-
     if not link: return {"status": 500, "error": "Upload Failed"}
 
-    await videos_col.update_one(
-        {"video_id": video_id},
-        {"$set": {"catbox_link": link, "cached_at": datetime.datetime.now()}}
-    )
-
+    await videos_col.update_one({"video_id": video_id}, {"$set": {"catbox_link": link, "cached_at": datetime.datetime.now()}})
     asyncio.create_task(asyncio.to_thread(send_telegram_log, title, duration, link, video_id))
 
     return {
-        "status": 200,
-        "title": title,
-        "duration": duration,
-        "link": link,
-        "id": video_id,
-        "thumbnail": thumbnail,
-        "cached": False,
-        "response_time": f"{time.time()-start_time:.2f}s"
+        "status": 200, "title": title, "duration": duration, "link": link,
+        "id": video_id, "thumbnail": thumbnail, "cached": False, "response_time": f"{time.time()-start_time:.2f}s"
     }
 
 if __name__ == "__main__":
     import uvicorn
-    # Initial fetch
     if USE_PROXY: fetch_proxies()
     uvicorn.run(app, host="0.0.0.0", port=8000)
     
