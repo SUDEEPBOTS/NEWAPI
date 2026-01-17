@@ -26,26 +26,35 @@ queries_col = db["query_mapping"]
 CATBOX_UPLOAD = "https://catbox.moe/user/api.php"
 
 # ─────────────────────────────
-# 🧹 TITLE CLEANER (NEW FEATURE)
+# 🧹 TITLE CLEANER (UPDATED & STRONGER)
 # ─────────────────────────────
 def clean_song_title(title):
     """
     YouTube ke lambe titles ko saaf karke sirf Gaane ka naam nikalta hai.
-    Example: "Song (Full Video) | Movie" -> "Song"
+    Example: "Song - Official Music Video" -> "Song"
     """
     if not title: return ""
     
     # 1. Bracket ke andar ka maal uda do: (Full Video), [Official], etc.
     title = re.sub(r"[\(\[\{].*?[\)\]\}]", "", title)
     
-    # 2. Pipes (|) se pehle ka hissa lo (zyadatar asli naam yahin hota hai)
+    # 2. Famous faltu keywords hata do (Case Insensitive)
+    # Note: Bade phrases pehle rakhe hain taaki "Official Music Video" pehle hate, sirf "Video" nahi.
+    keywords = [
+        "Official Music Video", "Official Video", "Music Video", 
+        "Full Video", "Lyrical Video", "Lyrical", 
+        "Audio", "Video", "Official", "Original", 
+        "Feat", "ft.", "Vs"
+    ]
+    for word in keywords:
+        title = re.sub(f"(?i){re.escape(word)}", "", title)
+
+    # 3. Separators se todo (| aur -)
+    # YouTube titles aksar "Song Name - Artist" ya "Song Name | Movie" hote hain
     if "|" in title:
         title = title.split("|")[0]
-    
-    # 3. Famous faltu words hata do
-    keywords = ["Full Video", "Lyrical", "Official Video", "Audio", "Vs", "Feat", "ft."]
-    for word in keywords:
-        title = re.sub(f"(?i){word}", "", title)
+    if "-" in title:
+        title = title.split("-")[0]
         
     return title.strip()
 
