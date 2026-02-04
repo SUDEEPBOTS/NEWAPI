@@ -43,7 +43,7 @@ bot = Client(
 # DATABASE
 # ─────────────────────────────
 mongo = AsyncIOMotorClient(MONGO_URL)
-db = mongo["MusicAPI_DB12"]
+db = mongo["MusicAPI_DB120"]
 videos_col = db["telegram_files_v2"]  
 keys_col = db["api_users"]            
 
