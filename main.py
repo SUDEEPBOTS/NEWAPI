@@ -1,13 +1,14 @@
 import os
 import time
 import datetime
-import requests
 import re
 import asyncio
 import uuid
-import aiohttp  # ⚠️ Ye naya install karna padega: pip install aiohttp
-from fastapi import FastAPI
+import aiohttp
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import RedirectResponse, JSONResponse
 from motor.motor_asyncio import AsyncIOMotorClient
+from pyrogram import Client
 import yt_dlp
 
 # ─────────────────────────────
@@ -15,41 +16,49 @@ import yt_dlp
 # ─────────────────────────────
 MONGO_URL = os.getenv("MONGO_DB_URI")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-LOGGER_ID = -1003639584506 # Tera Logger ID
-CATBOX_UPLOAD = "https://catbox.moe/user/api.php"
+API_ID = os.getenv("API_ID")         
+API_HASH = os.getenv("API_HASH")     
+LOGGER_ID = int(os.getenv("LOGGER_ID", "-1003639584506")) 
 
-# 👇 API URL LOADER
-FALLBACK_API_URL = "https://shrutibots.site"
-YOUR_API_URL = None
+# ⚡ External Downloader Config
+EXTERNAL_API_URL = "https://shrutibots.site"
 
-async def load_api_url():
-    global YOUR_API_URL
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get("https://pastebin.com/raw/rLsBhAQa", timeout=5) as resp:
-                if resp.status == 200:
-                    YOUR_API_URL = (await resp.text()).strip()
-                else:
-                    YOUR_API_URL = FALLBACK_API_URL
-    except:
-        YOUR_API_URL = FALLBACK_API_URL
-    print(f"✅ Using API: {YOUR_API_URL}")
+# 👇 Tera Render URL (Stream Redirect ke liye)
+BASE_URL = os.getenv("RENDER_EXTERNAL_URL", "https://yukiiapi.run.place")
 
-app = FastAPI(title="⚡ Sudeep API (External Bypass)")
+app = FastAPI(title="⚡ Sudeep API (Final Edition)")
+
+# ─────────────────────────────
+# TELEGRAM CLIENT
+# ─────────────────────────────
+bot = Client(
+    "Sudeep_Session",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN,
+    in_memory=True
+)
 
 # ─────────────────────────────
 # DATABASE
 # ─────────────────────────────
 mongo = AsyncIOMotorClient(MONGO_URL)
-db = mongo["MusicAPI_DB12"]
-videos_col = db["videos_cacht"]
-keys_col = db["api_users"]
-queries_col = db["query_mapping"]
+db = mongo["MusicAPI_8B12"]
+videos_col = db["telegram_files_v2"]  # Files yahan save hongi
+keys_col = db["api_users"]            # Keys aur Limits yahan hain
 
-# Startup Event to Load API URL
+# ─────────────────────────────
+# STARTUP
+# ─────────────────────────────
 @app.on_event("startup")
 async def startup_event():
-    await load_api_url()
+    print("🤖 Starting Telegram Client...")
+    await bot.start()
+    print("✅ Telegram Client Started!")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await bot.stop()
 
 # ─────────────────────────────
 # HELPER FUNCTIONS
@@ -68,29 +77,39 @@ def format_time(seconds):
     try: return f"{int(seconds)//60}:{int(seconds)%60:02d}"
     except: return "0:00"
 
-def get_fallback_thumb(vid_id):
-    return f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg"
-
-def send_telegram_log(title, duration, link, vid_id):
-    if not BOT_TOKEN: return
-    try:
-        msg = (
-            f"🍫 **ɴᴇᴡ sᴏɴɢ (API Bypass)**\n\n"
-            f"🫶 **ᴛɪᴛʟᴇ:** {title}\n\n"
-            f"⏱ **ᴅᴜʀᴀᴛɪᴏɴ:** {duration}\n"
-            f"🛡️ **ɪᴅ:** `{vid_id}`\n"
-            f"👀 [ʟɪɴᴋ]({link})\n\n"
-            f"🍭 @Kaito_3_2"
+# 🔥 LIMIT CHECKER (Tere purane logic jaisa)
+async def check_api_limit(key: str):
+    user = await keys_col.find_one({"api_key": key})
+    
+    # 1. Key Validate
+    if not user or not user.get("active", True):
+        return False, "Invalid or Inactive API Key"
+    
+    # 2. Reset Daily Limit (Agar naya din hai)
+    today = str(datetime.date.today())
+    if user.get("last_reset") != today:
+        await keys_col.update_one(
+            {"api_key": key}, 
+            {"$set": {"used_today": 0, "last_reset": today}}
         )
-        requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            data={"chat_id": LOGGER_ID, "text": msg, "parse_mode": "Markdown"}
-        )
-    except Exception as e:
-        print(f"❌ Logger Error: {e}")
+        user["used_today"] = 0 
+    
+    # 3. Limit Check
+    daily_limit = user.get("daily_limit", 100) # Default 100
+    if user.get("used_today", 0) >= daily_limit:
+        return False, "Daily Limit Exceeded. Contact Admin."
+    
+    return True, None
 
-# 🔥 STEP 1: METADATA (Search abhi bhi yt-dlp se lenge, safe hai)
-def get_video_id_only(query: str):
+# 🔥 INCREMENT COUNTER (Success hone par call hoga)
+async def increment_usage(key: str):
+    await keys_col.update_one(
+        {"api_key": key}, 
+        {"$inc": {"used_today": 1, "total_usage": 1}}
+    )
+
+# 🔥 METADATA
+def get_video_metadata(query: str):
     ydl_opts = {
         'quiet': True, 'skip_download': True, 'extract_flat': True, 'noplaylist': True,
         'extractor_args': {'youtube': {'player_client': ['android', 'web']}}
@@ -100,53 +119,41 @@ def get_video_id_only(query: str):
             direct_id = extract_video_id(query)
             if direct_id:
                 info = ydl.extract_info(f"https://www.youtube.com/watch?v={direct_id}", download=False)
-                thumb = info.get('thumbnail') or get_fallback_thumb(direct_id)
+                thumb = info.get('thumbnail') or f"https://i.ytimg.com/vi/{direct_id}/hqdefault.jpg"
                 return direct_id, info.get('title'), format_time(info.get('duration')), thumb
             else:
                 info = ydl.extract_info(f"ytsearch1:{query}", download=False)
                 if info and 'entries' in info and info['entries']:
                     v = info['entries'][0]
                     vid_id = v['id']
-                    thumb = v.get('thumbnail') or get_fallback_thumb(vid_id)
+                    thumb = v.get('thumbnail') or f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg"
                     return vid_id, v['title'], format_time(v.get('duration')), thumb
     except Exception as e:
-        print(f"Search Error: {e}")
+        print(f"Metadata Error: {e}")
     return None, None, None, None
 
-def upload_catbox(path: str):
-    try:
-        with open(path, "rb") as f:
-            r = requests.post(CATBOX_UPLOAD, data={"reqtype": "fileupload"}, files={"fileToUpload": f}, timeout=120)
-        return r.text.strip() if r.status_code == 200 and r.text.startswith("http") else None
-    except: return None
-
-# 🔥 STEP 2: DOWNLOAD VIA EXTERNAL API (The Fix)
-async def external_api_download(video_id: str):
-    global YOUR_API_URL
-    if not YOUR_API_URL: await load_api_url()
-
+# 🔥 DOWNLOADER (External API)
+async def download_via_shrutibots(video_id: str, type: str):
+    ext = "mp4" if type == "video" else "mp3"
     random_name = str(uuid.uuid4())
-    out_path = f"/tmp/{random_name}.mp4"
-
+    out_path = f"/tmp/{random_name}.{ext}"
     try:
         async with aiohttp.ClientSession() as session:
-            # 1. Get Token
-            params = {"url": video_id, "type": "video"} # Audio chahiye to "audio" kar dena
-            print(f"🌍 Requesting API: {YOUR_API_URL} for {video_id}")
-            
-            async with session.get(f"{YOUR_API_URL}/download", params=params, timeout=30) as resp:
-                if resp.status != 200:
-                    print("❌ API Download Step 1 Failed")
-                    return None
+            # Token Step
+            token_url = f"{EXTERNAL_API_URL}/download"
+            params = {"url": video_id, "type": type}
+            async with session.get(token_url, params=params, timeout=20) as resp:
+                if resp.status != 200: return None
                 data = await resp.json()
                 token = data.get("download_token")
-                if not token: return None
+            
+            if not token: return None
 
-            # 2. Stream File
-            stream_url = f"{YOUR_API_URL}/stream/{video_id}?type=video"
-            async with session.get(stream_url, headers={"X-Download-Token": token}, timeout=600) as resp:
+            # Stream Step
+            stream_url = f"{EXTERNAL_API_URL}/stream/{video_id}?type={type}"
+            headers = {"X-Download-Token": token}
+            async with session.get(stream_url, headers=headers, timeout=1200) as resp:
                 if resp.status != 200: return None
-                
                 with open(out_path, "wb") as f:
                     async for chunk in resp.content.iter_chunked(16384):
                         f.write(chunk)
@@ -154,103 +161,166 @@ async def external_api_download(video_id: str):
             if os.path.exists(out_path) and os.path.getsize(out_path) > 1024:
                 return out_path
             return None
-
     except Exception as e:
-        print(f"❌ External API Error: {e}")
+        print(f"❌ Download Error: {e}")
+        return None
+
+# 🔥 UPLOADER (Telegram)
+async def upload_to_telegram(file_path: str, title: str, duration: str, vid_id: str, link: str, type: str):
+    try:
+        caption = (
+            f"🫶 **ᴛɪᴛʟᴇ:** {title}\n"
+            f"⏱ **ᴅᴜʀᴀᴛɪᴏɴ:** {duration}\n"
+            f"🛡️ **ɪᴅ:** `{vid_id}`\n"
+            f"🔗 [Stream Link]({link})"
+        )
+        if type == "video":
+            msg = await bot.send_video(LOGGER_ID, file_path, caption=caption, supports_streaming=True)
+            return msg.video.file_id
+        else:
+            msg = await bot.send_audio(LOGGER_ID, file_path, caption=caption, title=title, performer="Sudeep API")
+            return msg.audio.file_id
+    except Exception as e:
+        print(f"❌ Upload Error: {e}")
         return None
 
 # ─────────────────────────────
-# AUTH CHECK
+# 🔥 MAIN LOGIC
 # ─────────────────────────────
-async def verify_and_count(key: str):
-    doc = await keys_col.find_one({"api_key": key})
-    if not doc or not doc.get("active", True): return False, "Invalid Key"
-    
-    today = str(datetime.date.today())
-    if doc.get("last_reset") != today:
-        await keys_col.update_one({"api_key": key}, {"$set": {"used_today": 0, "last_reset": today}})
-        doc["used_today"] = 0 
-
-    if doc.get("used_today", 0) >= doc.get("daily_limit", 100): return False, "Limit Exceeded"
-
-    await keys_col.update_one({"api_key": key}, {"$inc": {"used_today": 1, "total_usage": 1}})
-    return True, None
-
-# ─────────────────────────────
-# MAIN ROUTE
-# ─────────────────────────────
-@app.get("/getvideo")
-async def get_video(query: str, key: str):
+async def process_request(query: str, key: str, type: str):
     start_time = time.time()
-    is_valid, err = await verify_and_count(key)
-    if not is_valid: return {"status": 403, "error": err}
 
-    clean_query = query.strip().lower()
-    
-    # Check Cache for ID
-    video_id = None
-    cached_q = await queries_col.find_one({"query": clean_query})
-    
-    title, duration, thumbnail = "Unknown", "0:00", None
+    # 1. Limit Check (Pehle check, taaki fail hone par count na ho)
+    is_allowed, error_msg = await check_api_limit(key)
+    if not is_allowed:
+        return {"status": 403, "error": error_msg}
 
-    if cached_q:
-        video_id = cached_q["video_id"]
-        meta = await videos_col.find_one({"video_id": video_id})
-        if meta:
-            title = meta.get("title")
-            duration = meta.get("duration")
-            thumbnail = meta.get("thumbnail")
-    
+    # ID Extraction
+    clean_query = query.strip()
+    video_id = extract_video_id(clean_query)
+    title, duration, thumbnail = None, "0:00", None
+
     if not video_id:
-        video_id, title, duration, thumbnail = await asyncio.to_thread(get_video_id_only, query)
-        if video_id:
-             await queries_col.update_one({"query": clean_query}, {"$set": {"video_id": video_id}}, upsert=True)
+        video_id, title, duration, thumbnail = await asyncio.to_thread(get_video_metadata, query)
 
     if not video_id: return {"status": 404, "error": "Not Found"}
 
-    # DB Check for Link
-    cached = await videos_col.find_one({"video_id": video_id})
-    if cached and cached.get("catbox_link"):
-        return {
-            "status": 200, "title": cached.get("title", title), "duration": cached.get("duration", duration),
-            "link": cached["catbox_link"], "id": video_id, "thumbnail": cached.get("thumbnail", thumbnail), "cached": True
-        }
+    # Cache Check
+    existing = await videos_col.find_one({"yt_id": video_id})
+    stream_link = f"{BASE_URL}/stream/{video_id}?type={type}"
 
-    # 🔥 NEW DOWNLOAD METHOD
-    print(f"⏳ Downloading via API: {title}")
-    
-    # Metadata save karo taaki next time kaam aaye
-    await videos_col.update_one(
-        {"video_id": video_id}, 
-        {"$set": {"video_id": video_id, "title": title, "duration": duration, "thumbnail": thumbnail}}, 
-        upsert=True
-    )
+    if existing:
+        file_id = existing.get("video_file_id") if type == "video" else existing.get("audio_file_id")
+        if file_id:
+            # ✅ Success: Increment Limit
+            await increment_usage(key)
+            return {
+                "status": 200,
+                "title": existing.get("title", title),
+                "duration": existing.get("duration", duration),
+                "link": stream_link,
+                "id": video_id,
+                "thumbnail": existing.get("thumbnail", thumbnail),
+                "source": "cache",
+                "type": type,
+                "response_time": f"{time.time() - start_time:.2f}s"
+            }
 
-    # EXTERNAL API CALL
-    file_path = await external_api_download(video_id)
-    
-    if not file_path: return {"status": 500, "error": "External API Failed"}
+    # Download New
+    if not title:
+        _, title, duration, thumbnail = await asyncio.to_thread(get_video_metadata, video_id)
+        if not title: title = "Unknown"
 
-    # Upload to Catbox
-    link = await asyncio.to_thread(upload_catbox, file_path)
+    file_path = await download_via_shrutibots(video_id, type)
+    if not file_path: return {"status": 500, "error": "Download Failed"}
+
+    # Upload New
+    file_id = await upload_to_telegram(file_path, title, duration, video_id, stream_link, type)
     if os.path.exists(file_path): os.remove(file_path)
 
-    if not link: return {"status": 500, "error": "Upload Failed"}
+    if not file_id: return {"status": 500, "error": "Upload Failed"}
 
+    # Save to DB
+    update_field = "video_file_id" if type == "video" else "audio_file_id"
     await videos_col.update_one(
-        {"video_id": video_id},
-        {"$set": {"catbox_link": link, "cached_at": datetime.datetime.now()}}
+        {"yt_id": video_id},
+        {"$set": {
+            "yt_id": video_id, "title": title, "duration": duration, "thumbnail": thumbnail,
+            update_field: file_id, "cached_at": datetime.datetime.now()
+        }}, upsert=True
     )
-    
-    asyncio.create_task(asyncio.to_thread(send_telegram_log, title, duration, link, video_id))
+
+    # ✅ Success: Increment Limit
+    await increment_usage(key)
 
     return {
-        "status": 200, "title": title, "duration": duration, "link": link,
-        "id": video_id, "thumbnail": thumbnail, "cached": False,
-        "response_time": f"{time.time()-start_time:.2f}s"
+        "status": 200,
+        "title": title,
+        "duration": duration,
+        "link": stream_link,
+        "id": video_id,
+        "thumbnail": thumbnail,
+        "source": "new_upload",
+        "type": type,
+        "response_time": f"{time.time() - start_time:.2f}s"
     }
+
+# ─────────────────────────────
+# 🚀 ENDPOINTS
+# ─────────────────────────────
+
+# 1️⃣ Uptime
+@app.get("/")
+async def home():
+    return JSONResponse(content={"status": "Alive", "msg": "Sudeep API Running ⚡"}, status_code=200)
+
+# 2️⃣ AUDIO
+@app.get("/getaudio")
+async def get_audio_endpoint(query: str, key: str):
+    return await process_request(query, key, "audio")
+
+# 3️⃣ VIDEO
+@app.get("/getvideo")
+async def get_video_endpoint(query: str, key: str):
+    return await process_request(query, key, "video")
+
+# 4️⃣ STATS (Ye Naya Hai 🔥)
+@app.get("/stats")
+async def get_stats(key: str):
+    user = await keys_col.find_one({"api_key": key})
+    if not user:
+        return JSONResponse(content={"error": "Invalid API Key"}, status_code=403)
+    
+    daily_limit = user.get("daily_limit", 100)
+    used_today = user.get("used_today", 0)
+    
+    return {
+        "status": 200,
+        "owner": user.get("owner_name", "Unknown"),
+        "plan": "Premium" if daily_limit > 500 else "Free",
+        "daily_limit": daily_limit,
+        "used_today": used_today,
+        "remaining": daily_limit - used_today,
+        "total_usage": user.get("total_usage", 0)
+    }
+
+# 5️⃣ STREAM REDIRECT
+@app.get("/stream/{yt_id}")
+async def stream_redirect(yt_id: str, type: str = "audio"):
+    doc = await videos_col.find_one({"yt_id": yt_id})
+    if not doc: return RedirectResponse("https://http.cat/404")
+    
+    target_file_id = doc.get("video_file_id") if type == "video" else doc.get("audio_file_id")
+    if not target_file_id: return RedirectResponse("https://http.cat/404")
+    
+    try:
+        file_info = await bot.get_file(target_file_id)
+        fresh_link = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
+        return RedirectResponse(url=fresh_link)
+    except:
+        return RedirectResponse("https://http.cat/500")
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-            
+    
