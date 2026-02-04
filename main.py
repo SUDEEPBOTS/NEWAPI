@@ -26,7 +26,7 @@ EXTERNAL_API_URL = "https://shrutibots.site"
 # 👇 Tera Render URL (Stream Redirect ke liye)
 BASE_URL = os.getenv("RENDER_EXTERNAL_URL", "https://yukiiapi.run.place")
 
-app = FastAPI(title="⚡ Sudeep API (Fixed & Stable)")
+app = FastAPI(title="⚡ Sudeep API (Final Edition)")
 
 # ─────────────────────────────
 # TELEGRAM CLIENT
@@ -48,19 +48,17 @@ videos_col = db["telegram_files_v2"]
 keys_col = db["api_users"]            
 
 # ─────────────────────────────
-# STARTUP (Connection Test Added)
+# STARTUP
 # ─────────────────────────────
 @app.on_event("startup")
 async def startup_event():
     print("🤖 Starting Telegram Client...")
     await bot.start()
     
-    # 🔥 Self-Check: Kya Bot Channel mein Message bhej pa raha hai?
+    # 🔥 Self-Check
     try:
         me = await bot.get_me()
         print(f"✅ Bot Started: {me.first_name} (@{me.username})")
-        # Optional: Ek test msg bhejo taaki confirm ho jaye permissions sahi hain
-        # await bot.send_message(LOGGER_ID, "✅ **API Started!** System Online.")
     except Exception as e:
         print(f"⚠️ Warning: Bot shayad Logger Channel ({LOGGER_ID}) mein Admin nahi hai!")
         print(f"Error: {e}")
@@ -168,21 +166,46 @@ async def download_via_shrutibots(video_id: str, type: str):
         print(f"❌ Download Error: {e}")
         return None
 
-# 🔥 UPLOADER
+# 🔥 UPLOADER (Updated: Fixes file_0.bin issue) 🛠️
 async def upload_to_telegram(file_path: str, title: str, duration: str, vid_id: str, link: str, type: str):
     try:
+        # 1. Filename Clean karo
+        clean_title = re.sub(r'[\\/*?:"<>|]', "", title)
+        if not clean_title: clean_title = "Unknown_File"
+        
+        # 2. Extension lagao
+        ext = "mp4" if type == "video" else "mp3"
+        final_filename = f"{clean_title}.{ext}"
+
         caption = (
             f"🫶 **ᴛɪᴛʟᴇ:** {title}\n"
             f"⏱ **ᴅᴜʀᴀᴛɪᴏɴ:** {duration}\n"
             f"🛡️ **ɪᴅ:** `{vid_id}`\n"
             f"🔗 [Stream Link]({link})"
         )
+
+        print(f"🚀 Uploading as: {final_filename}...")
+
         if type == "video":
-            msg = await bot.send_video(LOGGER_ID, file_path, caption=caption, supports_streaming=True)
+            msg = await bot.send_video(
+                LOGGER_ID, 
+                file_path, 
+                caption=caption, 
+                supports_streaming=True,
+                file_name=final_filename  # 👈 YE FIX HAI
+            )
             return msg.video.file_id
         else:
-            msg = await bot.send_audio(LOGGER_ID, file_path, caption=caption, title=title, performer="Sudeep API")
+            msg = await bot.send_audio(
+                LOGGER_ID, 
+                file_path, 
+                caption=caption, 
+                title=title, 
+                performer="Sudeep API",
+                file_name=final_filename  # 👈 YE FIX HAI
+            )
             return msg.audio.file_id
+
     except Exception as e:
         print(f"❌ Upload Error: {e}")
         return None
@@ -270,7 +293,7 @@ async def process_request(query: str, key: str, type: str):
 # 🚀 ENDPOINTS
 # ─────────────────────────────
 
-# 1️⃣ Uptime (GET aur HEAD dono support karega) ✅
+# 1️⃣ Uptime
 @app.get("/")
 @app.head("/")
 async def home():
@@ -306,38 +329,32 @@ async def get_stats(key: str):
         "total_usage": user.get("total_usage", 0)
     }
 
-# 5️⃣ STREAM REDIRECT (Updated: 100% Error Fix ✅)
+# 5️⃣ STREAM REDIRECT (Direct API - 100% Works)
 @app.get("/stream/{yt_id}")
 async def stream_redirect(yt_id: str, type: str = "audio"):
     doc = await videos_col.find_one({"yt_id": yt_id})
     if not doc:
         return RedirectResponse("https://http.cat/404")
     
-    # Target ID nikalo
     target_file_id = doc.get("video_file_id") if type == "video" else doc.get("audio_file_id")
     if not target_file_id:
         return RedirectResponse("https://http.cat/404")
     
-    # 🔥 FIX: Use Direct Telegram API (Not Pyrogram)
-    # Ye crash nahi hoga, agar link expire bhi hua to naya link dega
     try:
         async with aiohttp.ClientSession() as session:
-            # Telegram Bot API Call
+            # Seedha Telegram Server se Link maango
             api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={target_file_id}"
             
             async with session.get(api_url) as resp:
                 data = await resp.json()
                 
-                # Agar Telegram ne mana kiya (e.g. Invalid File ID)
                 if not data.get("ok"):
                     print(f"❌ Telegram API Error: {data}")
                     return JSONResponse(content=data, status_code=400)
                 
-                # Path mil gaya -> Link banao
                 file_path = data["result"]["file_path"]
                 fresh_link = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
                 
-                # Redirect user to direct download
                 return RedirectResponse(url=fresh_link)
 
     except Exception as e:
