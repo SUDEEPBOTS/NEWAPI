@@ -26,7 +26,7 @@ EXTERNAL_API_URL = "https://shrutibots.site"
 # 👇 Tera Render URL (Stream Redirect ke liye)
 BASE_URL = os.getenv("RENDER_EXTERNAL_URL", "https://yukiiapi.run.place")
 
-app = FastAPI(title="⚡ Sudeep API (Final Edition)")
+app = FastAPI(title="⚡ Sudeep API (Fixed & Stable)")
 
 # ─────────────────────────────
 # TELEGRAM CLIENT
@@ -43,18 +43,29 @@ bot = Client(
 # DATABASE
 # ─────────────────────────────
 mongo = AsyncIOMotorClient(MONGO_URL)
-db = mongo["MusicAPI_8B12"]
-videos_col = db["telegram_files_v2"]  # Files yahan save hongi
-keys_col = db["api_users"]            # Keys aur Limits yahan hain
+db = mongo["MusicAPI_DB12"]
+videos_col = db["telegram_files_v2"]  
+keys_col = db["api_users"]            
 
 # ─────────────────────────────
-# STARTUP
+# STARTUP (Connection Test Added)
 # ─────────────────────────────
 @app.on_event("startup")
 async def startup_event():
     print("🤖 Starting Telegram Client...")
     await bot.start()
-    print("✅ Telegram Client Started!")
+    
+    # 🔥 Self-Check: Kya Bot Channel mein Message bhej pa raha hai?
+    try:
+        me = await bot.get_me()
+        print(f"✅ Bot Started: {me.first_name} (@{me.username})")
+        # Optional: Ek test msg bhejo taaki confirm ho jaye permissions sahi hain
+        # await bot.send_message(LOGGER_ID, "✅ **API Started!** System Online.")
+    except Exception as e:
+        print(f"⚠️ Warning: Bot shayad Logger Channel ({LOGGER_ID}) mein Admin nahi hai!")
+        print(f"Error: {e}")
+
+    print("✅ Telegram Client Ready!")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -77,15 +88,12 @@ def format_time(seconds):
     try: return f"{int(seconds)//60}:{int(seconds)%60:02d}"
     except: return "0:00"
 
-# 🔥 LIMIT CHECKER (Tere purane logic jaisa)
+# 🔥 LIMIT CHECKER
 async def check_api_limit(key: str):
     user = await keys_col.find_one({"api_key": key})
-    
-    # 1. Key Validate
     if not user or not user.get("active", True):
         return False, "Invalid or Inactive API Key"
     
-    # 2. Reset Daily Limit (Agar naya din hai)
     today = str(datetime.date.today())
     if user.get("last_reset") != today:
         await keys_col.update_one(
@@ -94,14 +102,13 @@ async def check_api_limit(key: str):
         )
         user["used_today"] = 0 
     
-    # 3. Limit Check
-    daily_limit = user.get("daily_limit", 100) # Default 100
+    daily_limit = user.get("daily_limit", 100)
     if user.get("used_today", 0) >= daily_limit:
-        return False, "Daily Limit Exceeded. Contact Admin."
+        return False, "Daily Limit Exceeded."
     
     return True, None
 
-# 🔥 INCREMENT COUNTER (Success hone par call hoga)
+# 🔥 INCREMENT COUNTER
 async def increment_usage(key: str):
     await keys_col.update_one(
         {"api_key": key}, 
@@ -132,24 +139,21 @@ def get_video_metadata(query: str):
         print(f"Metadata Error: {e}")
     return None, None, None, None
 
-# 🔥 DOWNLOADER (External API)
+# 🔥 DOWNLOADER
 async def download_via_shrutibots(video_id: str, type: str):
     ext = "mp4" if type == "video" else "mp3"
     random_name = str(uuid.uuid4())
     out_path = f"/tmp/{random_name}.{ext}"
     try:
         async with aiohttp.ClientSession() as session:
-            # Token Step
             token_url = f"{EXTERNAL_API_URL}/download"
             params = {"url": video_id, "type": type}
             async with session.get(token_url, params=params, timeout=20) as resp:
                 if resp.status != 200: return None
                 data = await resp.json()
                 token = data.get("download_token")
-            
             if not token: return None
 
-            # Stream Step
             stream_url = f"{EXTERNAL_API_URL}/stream/{video_id}?type={type}"
             headers = {"X-Download-Token": token}
             async with session.get(stream_url, headers=headers, timeout=1200) as resp:
@@ -157,7 +161,6 @@ async def download_via_shrutibots(video_id: str, type: str):
                 with open(out_path, "wb") as f:
                     async for chunk in resp.content.iter_chunked(16384):
                         f.write(chunk)
-            
             if os.path.exists(out_path) and os.path.getsize(out_path) > 1024:
                 return out_path
             return None
@@ -165,7 +168,7 @@ async def download_via_shrutibots(video_id: str, type: str):
         print(f"❌ Download Error: {e}")
         return None
 
-# 🔥 UPLOADER (Telegram)
+# 🔥 UPLOADER
 async def upload_to_telegram(file_path: str, title: str, duration: str, vid_id: str, link: str, type: str):
     try:
         caption = (
@@ -190,7 +193,7 @@ async def upload_to_telegram(file_path: str, title: str, duration: str, vid_id: 
 async def process_request(query: str, key: str, type: str):
     start_time = time.time()
 
-    # 1. Limit Check (Pehle check, taaki fail hone par count na ho)
+    # 1. Limit Check
     is_allowed, error_msg = await check_api_limit(key)
     if not is_allowed:
         return {"status": 403, "error": error_msg}
@@ -212,7 +215,6 @@ async def process_request(query: str, key: str, type: str):
     if existing:
         file_id = existing.get("video_file_id") if type == "video" else existing.get("audio_file_id")
         if file_id:
-            # ✅ Success: Increment Limit
             await increment_usage(key)
             return {
                 "status": 200,
@@ -250,7 +252,6 @@ async def process_request(query: str, key: str, type: str):
         }}, upsert=True
     )
 
-    # ✅ Success: Increment Limit
     await increment_usage(key)
 
     return {
@@ -269,8 +270,9 @@ async def process_request(query: str, key: str, type: str):
 # 🚀 ENDPOINTS
 # ─────────────────────────────
 
-# 1️⃣ Uptime
+# 1️⃣ Uptime (GET aur HEAD dono support karega) ✅
 @app.get("/")
+@app.head("/")
 async def home():
     return JSONResponse(content={"status": "Alive", "msg": "Sudeep API Running ⚡"}, status_code=200)
 
@@ -284,7 +286,7 @@ async def get_audio_endpoint(query: str, key: str):
 async def get_video_endpoint(query: str, key: str):
     return await process_request(query, key, "video")
 
-# 4️⃣ STATS (Ye Naya Hai 🔥)
+# 4️⃣ STATS
 @app.get("/stats")
 async def get_stats(key: str):
     user = await keys_col.find_one({"api_key": key})
@@ -304,23 +306,44 @@ async def get_stats(key: str):
         "total_usage": user.get("total_usage", 0)
     }
 
-# 5️⃣ STREAM REDIRECT
+# 5️⃣ STREAM REDIRECT (Updated: 100% Error Fix ✅)
 @app.get("/stream/{yt_id}")
 async def stream_redirect(yt_id: str, type: str = "audio"):
     doc = await videos_col.find_one({"yt_id": yt_id})
-    if not doc: return RedirectResponse("https://http.cat/404")
+    if not doc:
+        return RedirectResponse("https://http.cat/404")
     
+    # Target ID nikalo
     target_file_id = doc.get("video_file_id") if type == "video" else doc.get("audio_file_id")
-    if not target_file_id: return RedirectResponse("https://http.cat/404")
+    if not target_file_id:
+        return RedirectResponse("https://http.cat/404")
     
+    # 🔥 FIX: Use Direct Telegram API (Not Pyrogram)
+    # Ye crash nahi hoga, agar link expire bhi hua to naya link dega
     try:
-        file_info = await bot.get_file(target_file_id)
-        fresh_link = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
-        return RedirectResponse(url=fresh_link)
-    except:
+        async with aiohttp.ClientSession() as session:
+            # Telegram Bot API Call
+            api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={target_file_id}"
+            
+            async with session.get(api_url) as resp:
+                data = await resp.json()
+                
+                # Agar Telegram ne mana kiya (e.g. Invalid File ID)
+                if not data.get("ok"):
+                    print(f"❌ Telegram API Error: {data}")
+                    return JSONResponse(content=data, status_code=400)
+                
+                # Path mil gaya -> Link banao
+                file_path = data["result"]["file_path"]
+                fresh_link = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+                
+                # Redirect user to direct download
+                return RedirectResponse(url=fresh_link)
+
+    except Exception as e:
+        print(f"❌ Stream Server Error: {e}")
         return RedirectResponse("https://http.cat/500")
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-    
