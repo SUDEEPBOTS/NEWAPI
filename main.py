@@ -21,7 +21,7 @@ API_HASH = os.getenv("API_HASH")
 LOGGER_ID = int(os.getenv("LOGGER_ID", "-100363958")) 
 
 # ⚡ External Downloader Config
-EXTERNAL_API_URL = "https://shrutibots.site"
+EXTERNAL_API_URL = "https://music.yukiapi.site"
 
 # 👇 Tera Render URL (Stream Redirect ke liye)
 BASE_URL = os.getenv("RENDER_EXTERNAL_URL", "https://music.yukiapi.site")
