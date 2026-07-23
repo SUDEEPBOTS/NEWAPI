@@ -18,13 +18,13 @@ MONGO_URL = os.getenv("MONGO_DB_URI")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_ID = os.getenv("API_ID")         
 API_HASH = os.getenv("API_HASH")     
-LOGGER_ID = int(os.getenv("LOGGER_ID", "-1003639584506")) 
+LOGGER_ID = int(os.getenv("LOGGER_ID", "-100363958")) 
 
 # ⚡ External Downloader Config
 EXTERNAL_API_URL = "https://shrutibots.site"
 
 # 👇 Tera Render URL (Stream Redirect ke liye)
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL", "https://yukiiapi.run.place")
+BASE_URL = os.getenv("RENDER_EXTERNAL_URL", "https://music.yukiapi.site")
 
 app = FastAPI(title="⚡ Sudeep API (Final Edition)")
 
@@ -43,7 +43,7 @@ bot = Client(
 # DATABASE
 # ─────────────────────────────
 mongo = AsyncIOMotorClient(MONGO_URL)
-db = mongo["MusicAPI_DB120"]
+db = mongo["API999_DB120"]
 videos_col = db["telegram_files_v2"]  
 keys_col = db["api_users"]            
 
@@ -60,14 +60,15 @@ async def startup_event():
         me = await bot.get_me()
         print(f"✅ Bot Started: {me.first_name} (@{me.username})")
     except Exception as e:
-        print(f"⚠️ Warning: Bot shayad Logger Channel ({LOGGER_ID}) mein Admin nahi hai!")
+        print(f"⚠️ သတိပေးချက် - Bot က Logger Channel ({LOGGER_ID}) မှာ Admin (စီမံခန့်ခွဲသူ) ဖြစ်မနေလောက်ဘူး!")
+ )
         print(f"Error: {e}")
 
     print("✅ Telegram Client Ready!")
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    await bot.stop()
+stop    await bot.s)
 
 # ─────────────────────────────
 # HELPER FUNCTIONS
@@ -297,7 +298,7 @@ async def process_request(query: str, key: str, type: str):
 @app.get("/")
 @app.head("/")
 async def home():
-    return JSONResponse(content={"status": "Alive", "msg": "Sudeep API Running ⚡"}, status_code=200)
+    return JSONResponse(content={"status": "Alive", "msg": "HanThar API Running ⚡"}, status_code=200)
 
 # 2️⃣ AUDIO
 @app.get("/getaudio")
