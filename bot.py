@@ -15,8 +15,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 MONGO_URL = os.getenv("MONGO_DB_URI")
 
-ADMIN_ID = 6356015122
-ADMIN_CONTACT = "@Kaito_3_2"
+ADMIN_ID = 8315544720
+ADMIN_CONTACT = "@HEX_KING9"
 
 FREE_DAYS = 2
 DEFAULT_LIMIT = 50
@@ -25,7 +25,7 @@ DEFAULT_LIMIT = 50
 # DB
 # ─────────────────────────────
 mongo = AsyncIOMotorClient(MONGO_URL)
-db = mongo["MusicAPI_DB1"]
+db = mongo["API999_DB1"]
 keys_col = db["api_users"]
 
 # ─────────────────────────────
@@ -42,7 +42,7 @@ app = Client(
 # HELPERS
 # ─────────────────────────────
 def generate_key():
-    return "SUD-" + secrets.token_hex(8)
+    return "999cores-" + secrets.token_hex(8)
 
 def now_ts():
     return int(time.time())
@@ -56,9 +56,10 @@ def days_to_ts(days: int):
 @app.on_message(filters.command("start"))
 async def start(_, m: Message):
     await m.reply(
-        "👋 **Welcome to Sudeep Music API Bot**\n\n"
+        "👋 **Welcome to HanThar Music API Bot**\n\n"
         "📌 Use `/getapi` to generate your API key\n"
         "📌 Free access for 2 days\n\n"
+        "api key ဝယ်ခြင်းပါက"
         f"🆘 Support: {ADMIN_CONTACT}"
     )
 
