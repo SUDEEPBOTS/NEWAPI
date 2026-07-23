@@ -61,7 +61,7 @@ async def startup_event():
         print(f"✅ Bot Started: {me.first_name} (@{me.username})")
     except Exception as e:
         print(f"⚠️ သတိပေးချက် - Bot က Logger Channel ({LOGGER_ID}) မှာ Admin (စီမံခန့်ခွဲသူ) ဖြစ်မနေလောက်ဘူး!")
- )
+ 
         print(f"Error: {e}")
 
     print("✅ Telegram Client Ready!")
